@@ -31,11 +31,15 @@ runs/{system}_{modality}_seed{n}/best.pt
 | `highlight/` | 学習済みモデルで予測し、切り抜く | 未実装（雛形のみ） |
 | `frontend/` | 画面 | 未着手（置き場所だけ） |
 | `jobs/` | 計算サーバ（Slurm）に投入するジョブスクリプト | |
+| `tools/` | MoSu の変換（`prepare_mosu.py`）、偽データ（`make_fake_data.py`）、予測と正解の表示（`demo_mosu.py`） | |
+| `docs/` | 計算サーバでの手順（`server_setup.md`） | |
 | `data/` | 特徴量・正解・分割（Gitには入れない） | `data/README.md` 参照 |
 | `runs/` | 学習結果（Gitには入れない） | 実行すると自動で作られる |
 | `logs/` | ジョブの出力 `.out`（Gitには入れない） | |
 
 ## 環境構築（IS計算サーバ）
+
+初めての場合（ログイン・鍵の設定・GitHubとの接続など）は [docs/server_setup.md](docs/server_setup.md) を最初から読むこと。
 
 ログインノードで実行する（計算ノードには uv が入っていない）。
 
@@ -46,6 +50,36 @@ uv sync --locked
 ```
 
 ## 学習の実行
+
+### GPUテスト（MoSuの一部で、小さいGPUを借りて3エポックだけ学習）
+
+1. ログインノードで、MoSu の train / val から一部を `train.py` の形に変換する（testは使わない）
+
+   ```bash
+   source .venv/bin/activate
+   python tools/prepare_mosu.py --modality visual --n_train 200 --n_val 50 --remote
+   ```
+
+   - `--remote`：40GBある特徴量ファイルをダウンロードせず、選んだ動画だけネット越しに読む
+   - 分割・メタデータ・正解（約230MB）は `mosu/` に自動でダウンロードされる
+   - `--cluster 0〜9` でジャンル（MoSu の cluster_id）を絞れる
+   - `--include_tags "Call of Duty"` / `--exclude_tags "Trailer (promotion)"` でタグで選べる（`mosu/vocabulary.csv` が必要）
+   - `--count_only` で、選ばれる本数だけを表示する
+   - `--n_train 0 --n_val 0` で、条件に合う動画を全部使う
+   - ジャンルとタグの一覧は `python tools/mosu_genres.py`
+   - 正解は MoSu の `gt_score`（1秒ごと、0〜1）をそのまま使う仮のもの。正式な変換は評価・統合担当が決める
+
+2. 小さいGPU（A100 MIG 10GB）でジョブを投入する
+
+   ```bash
+   sbatch -J gpu_test -p a100_1g --gres=gpu:1g.10gb:1 --qos=low jobs/gpu_test.sbatch
+   tail -f logs/gpu_test-<ジョブID>.out
+   ```
+
+   - 最後に `gpu: NVIDIA A100 80GB PCIe MIG 1g.10gb` のように出れば成功
+   - 自分のモデルで試すときは `--export=ALL,SYSTEM=fast` を付ける
+   - 偽データで試すときは `--export=ALL,DATA=data_fake` を付ける（`tools/make_fake_data.py` で自動作成）
+   - 結果は `runs_test/` に出る（データ・結果ともGitには入れない）
 
 ### 動作確認（対話セッション、30分まで）
 
@@ -69,6 +103,16 @@ sbatch -J train_fast_visual \
 
 - `--qos` は所属によって異なる。サーバ利用ガイド 2.2 を確認すること
 - 学習時間を比べるときは、全員同じパーティション（GPU）を使う
+
+### プロトタイプ：予測と正解を重ねて表示（ログインノードで）
+
+```bash
+python tools/demo_mosu.py --run runs/_smoke_visual_seed0 --n 5 --remote
+```
+
+- `demo_out/all.png` に予測（青）と MoSu の正解（赤）を重ねたグラフ、`demo_out/pred.csv` に予測（video_id, t, score, raw_score）が出る
+- 動画は、学習に使った train / val と test を除いた val の残りから選ぶ
+- 予測で一番高い15秒の区間と、その場面から再生する YouTube のリンクも表示する
 
 ### ジョブの確認
 

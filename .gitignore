@@ -7,6 +7,12 @@ __pycache__/
 data/*
 !data/README.md
 runs/
+runs_test/
+demo_out/
+data_fake/
+data_mosu/
+mosu/
+*.h5
 outputs/
 videos/
 *.npy
